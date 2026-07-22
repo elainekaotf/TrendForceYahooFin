@@ -24,14 +24,14 @@
 <p class="hint">
   Enter a ticker and this page triggers the <code>scrape-on-demand</code> GitHub Action,
   which runs the Playwright scraper and commits the resulting CSV back to this repo.
-  Your token is only used from your own browser to call GitHub's API directly — it is
-  never sent anywhere else and is stored only in this browser's localStorage.
+  The GitHub token that makes this work lives only on the backend proxy — this page
+  never sees or holds it. You just need the shared passcode to use the dashboard.
 </p>
 
 <fieldset>
-  <legend>Access token</legend>
-  <label for="token">GitHub token (fine-grained PAT, scope: Actions: Read &amp; write, Contents: Read &amp; write)</label>
-  <input id="token" type="password" placeholder="github_pat_...">
+  <legend>Passcode</legend>
+  <label for="passcode">Shared passcode</label>
+  <input id="passcode" type="password" placeholder="ask the owner for this">
 </fieldset>
 
 <fieldset>
@@ -51,12 +51,15 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
-// Fixed — this page only ever lives at elainekaotf.github.io/TrendForceYahooFin/.
+// This page only ever lives at elainekaotf.github.io/TrendForceYahooFin/.
 const OWNER = 'elainekaotf';
 const REPO = 'TrendForceYahooFin';
+// Backend proxy that actually holds the GitHub token — set this to your
+// deployed Worker's URL (see worker/README.md).
+const PROXY_URL = 'https://trendforceyahoofin-dispatch.YOUR-SUBDOMAIN.workers.dev';
 
-// Persist the token locally only — never sent anywhere but api.github.com.
-for (const id of ['token']) {
+// Persist the passcode locally only — it's sent to the proxy, never to GitHub directly.
+for (const id of ['passcode']) {
   const saved = localStorage.getItem('tfyf_' + id);
   if (saved) $(id).value = saved;
   $(id).addEventListener('change', () => localStorage.setItem('tfyf_' + id, $(id).value));
@@ -66,31 +69,27 @@ function log(msg) {
   $('log').textContent += '\n' + msg;
 }
 
-async function gh(path, opts = {}) {
-  const token = $('token').value.trim();
-  const res = await fetch(`https://api.github.com${path}`, {
+async function proxy(path, opts = {}) {
+  const passcode = $('passcode').value.trim();
+  return fetch(`${PROXY_URL}${path}`, {
     ...opts,
     headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+      'X-Dashboard-Passcode': passcode,
       ...(opts.headers || {}),
     },
   });
-  return res;
 }
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 $('run').addEventListener('click', async () => {
-  const owner = OWNER;
-  const repo = REPO;
   const symbol = $('symbol').value.trim();
   const from = $('from').value.trim() || '2018-01-01';
   const to = $('to').value.trim();
 
-  if (!$('token').value.trim() || !symbol) {
-    log('Fill in token and symbol first.');
+  if (!$('passcode').value.trim() || !symbol) {
+    log('Fill in passcode and symbol first.');
     return;
   }
 
@@ -98,41 +97,34 @@ $('run').addEventListener('click', async () => {
   $('result').innerHTML = '';
   $('log').textContent = `Dispatching workflow for ${symbol}...`;
 
-  // No dispatch API returns a run id directly, so we correlate by
-  // timestamp instead: record "now", then poll runs list for the first
-  // workflow_dispatch run created after that moment.
-  const dispatchedAt = new Date();
-  const runIdToken = crypto.randomUUID();
-
   try {
-    const dispatchRes = await gh(`/repos/${owner}/${repo}/actions/workflows/scrape-on-demand.yml/dispatches`, {
+    const dispatchRes = await proxy('/api/dispatch', {
       method: 'POST',
-      body: JSON.stringify({
-        ref: 'main',
-        inputs: { symbol, from, to, run_id: runIdToken },
-      }),
+      body: JSON.stringify({ symbol, from, to }),
     });
-    if (dispatchRes.status !== 204) {
-      const body = await dispatchRes.text();
-      throw new Error(`Dispatch failed (${dispatchRes.status}): ${body}`);
-    }
+    const dispatchData = await dispatchRes.json();
+    if (!dispatchRes.ok) throw new Error(dispatchData.error || `Dispatch failed (${dispatchRes.status})`);
+    const { dispatchedAt } = dispatchData;
     log('Workflow dispatched. Waiting for it to start...');
 
     // Poll for the run to appear, then for it to finish.
     let run = null;
     for (let i = 0; i < 20 && !run; i++) {
       await sleep(3000);
-      const runsRes = await gh(`/repos/${owner}/${repo}/actions/workflows/scrape-on-demand.yml/runs?event=workflow_dispatch&per_page=5`);
-      const runsData = await runsRes.json();
-      run = (runsData.workflow_runs || []).find(r => new Date(r.created_at) >= dispatchedAt);
+      const statusRes = await proxy(`/api/status?dispatchedAt=${encodeURIComponent(dispatchedAt)}`);
+      const statusData = await statusRes.json();
+      if (!statusRes.ok) throw new Error(statusData.error || `Status check failed (${statusRes.status})`);
+      run = statusData.run;
     }
     if (!run) throw new Error('Timed out waiting for the run to appear — check the Actions tab.');
     log(`Run started: ${run.html_url}`);
 
     while (run.status !== 'completed') {
       await sleep(5000);
-      const runRes = await gh(`/repos/${owner}/${repo}/actions/runs/${run.id}`);
-      run = await runRes.json();
+      const statusRes = await proxy(`/api/status?runId=${run.id}`);
+      const statusData = await statusRes.json();
+      if (!statusRes.ok) throw new Error(statusData.error || `Status check failed (${statusRes.status})`);
+      run = statusData.run;
       log(`Status: ${run.status}...`);
     }
 
@@ -143,7 +135,7 @@ $('run').addEventListener('click', async () => {
 
     const fileName = `${symbol.replace(/[^a-zA-Z0-9.]/g, '_')}_history_daily.csv`;
     // Cache-bust with a query param since raw.githubusercontent.com caches aggressively.
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/csv/${fileName}?t=${Date.now()}`;
+    const rawUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/csv/${fileName}?t=${Date.now()}`;
     const csvRes = await fetch(rawUrl);
     if (!csvRes.ok) throw new Error(`Could not fetch csv/${fileName} (${csvRes.status})`);
     const csvText = await csvRes.text();

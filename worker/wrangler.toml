@@ -1,0 +1,7 @@
+name = "trendforceyahoofin-dispatch"
+main = "index.js"
+compatibility_date = "2024-11-01"
+
+# Secrets (set via `wrangler secret put`, never committed here):
+#   GH_TOKEN           — fine-grained PAT, scoped to this repo, Actions: RW + Contents: RW
+#   DASHBOARD_PASSCODE — shared passphrase the dashboard must send to use it
