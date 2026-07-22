@@ -16,6 +16,10 @@
   #log { white-space: pre-wrap; font-family: monospace; font-size: 0.85rem; background: #8881; padding: 10px; border-radius: 6px; min-height: 40px; }
   .hint { font-size: 0.85rem; opacity: 0.75; }
   a.download { display: inline-block; margin-top: 12px; }
+  #chart { margin-top: 16px; }
+  #chart svg { width: 100%; height: auto; display: block; }
+  #chart .axis-label { font-size: 10px; fill: currentColor; opacity: 0.6; }
+  #chart .line { fill: none; stroke: #4c8bf5; stroke-width: 1.5; }
 </style>
 </head>
 <body>
@@ -47,6 +51,7 @@
 
 <div id="log">Idle.</div>
 <div id="result"></div>
+<div id="chart"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -83,6 +88,67 @@ async function proxy(path, opts = {}) {
 
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// Minimal CSV parser — good enough here since scrape_history_page.js only
+// ever quotes the volume field (thousands separators), and date/close never
+// contain commas or quotes.
+function parseCsv(text) {
+  const lines = text.trim().split('\n');
+  const header = lines[0].split(',');
+  return lines.slice(1).map(line => {
+    const cells = line.split(',');
+    const row = {};
+    header.forEach((h, i) => { row[h] = cells[i]; });
+    return row;
+  });
+}
+
+// Renders an inline SVG line chart of adjClose over time — no chart library
+// so the page stays a single self-contained file with no external deps.
+function renderChart(rows) {
+  const points = rows
+    .map(r => ({ date: r.date, close: parseFloat(r.adjClose) }))
+    .filter(p => p.date && !isNaN(p.close))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (!points.length) {
+    $('chart').innerHTML = '';
+    return;
+  }
+
+  const width = 640, height = 260, padding = { top: 10, right: 10, bottom: 20, left: 44 };
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
+
+  const closes = points.map(p => p.close);
+  const min = Math.min(...closes), max = Math.max(...closes);
+  const range = max - min || 1;
+
+  const x = (i) => padding.left + (i / (points.length - 1 || 1)) * plotW;
+  const y = (v) => padding.top + plotH - ((v - min) / range) * plotH;
+
+  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.close).toFixed(1)}`).join(' ');
+
+  const yTicks = [min, min + range / 2, max];
+  const yLabels = yTicks.map(v =>
+    `<text class="axis-label" x="${padding.left - 6}" y="${y(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${v.toFixed(2)}</text>`
+  ).join('');
+
+  const firstLabel = points[0].date;
+  const lastLabel = points[points.length - 1].date;
+  const xLabels = `
+    <text class="axis-label" x="${padding.left}" y="${height - 4}" text-anchor="start">${firstLabel}</text>
+    <text class="axis-label" x="${width - padding.right}" y="${height - 4}" text-anchor="end">${lastLabel}</text>
+  `;
+
+  $('chart').innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+      <path class="line" d="${path}" />
+      ${yLabels}
+      ${xLabels}
+    </svg>
+  `;
+}
+
 $('run').addEventListener('click', async () => {
   const symbol = $('symbol').value.trim();
   const from = $('from').value.trim() || '2018-01-01';
@@ -95,6 +161,7 @@ $('run').addEventListener('click', async () => {
 
   $('run').disabled = true;
   $('result').innerHTML = '';
+  $('chart').innerHTML = '';
   $('log').textContent = `Dispatching workflow for ${symbol}...`;
 
   try {
@@ -143,6 +210,8 @@ $('run').addEventListener('click', async () => {
     const blob = new Blob([csvText], { type: 'text/csv' });
     const blobUrl = URL.createObjectURL(blob);
     $('result').innerHTML = `<a class="download" download="${fileName}" href="${blobUrl}">Download ${fileName}</a>`;
+
+    renderChart(parseCsv(csvText));
     log('Done.');
   } catch (err) {
     log(`Error: ${err.message}`);
