@@ -1,0 +1,16 @@
+{
+  "name": "trendforceyahoofin",
+  "version": "1.0.0",
+  "description": "Scrape Yahoo Finance for stock quote data",
+  "main": "scrape_quotes.js",
+  "scripts": {
+    "scrape": "node scrape_quotes.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.61.0"
+  }
+}
