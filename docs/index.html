@@ -29,11 +29,7 @@
 </p>
 
 <fieldset>
-  <legend>Repo &amp; access token</legend>
-  <label for="owner">Repo owner</label>
-  <input id="owner" placeholder="e.g. elainekao">
-  <label for="repo">Repo name</label>
-  <input id="repo" placeholder="e.g. TrendForceYahooFin">
+  <legend>Access token</legend>
   <label for="token">GitHub token (fine-grained PAT, scope: Actions: Read &amp; write, Contents: Read &amp; write)</label>
   <input id="token" type="password" placeholder="github_pat_...">
 </fieldset>
@@ -55,8 +51,12 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
-// Persist repo/token locally only — never sent anywhere but api.github.com.
-for (const id of ['owner', 'repo', 'token']) {
+// Fixed — this page only ever lives at elainekaotf.github.io/TrendForceYahooFin/.
+const OWNER = 'elainekaotf';
+const REPO = 'TrendForceYahooFin';
+
+// Persist the token locally only — never sent anywhere but api.github.com.
+for (const id of ['token']) {
   const saved = localStorage.getItem('tfyf_' + id);
   if (saved) $(id).value = saved;
   $(id).addEventListener('change', () => localStorage.setItem('tfyf_' + id, $(id).value));
@@ -83,14 +83,14 @@ async function gh(path, opts = {}) {
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 $('run').addEventListener('click', async () => {
-  const owner = $('owner').value.trim();
-  const repo = $('repo').value.trim();
+  const owner = OWNER;
+  const repo = REPO;
   const symbol = $('symbol').value.trim();
   const from = $('from').value.trim() || '2018-01-01';
   const to = $('to').value.trim();
 
-  if (!owner || !repo || !$('token').value.trim() || !symbol) {
-    log('Fill in owner, repo, token, and symbol first.');
+  if (!$('token').value.trim() || !symbol) {
+    log('Fill in token and symbol first.');
     return;
   }
 
