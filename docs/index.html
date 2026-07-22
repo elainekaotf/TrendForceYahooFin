@@ -16,10 +16,18 @@
   #log { white-space: pre-wrap; font-family: monospace; font-size: 0.85rem; background: #8881; padding: 10px; border-radius: 6px; min-height: 40px; }
   .hint { font-size: 0.85rem; opacity: 0.75; }
   a.download { display: inline-block; margin-top: 12px; }
-  #chart { margin-top: 16px; }
+  #chart { margin-top: 16px; position: relative; }
   #chart svg { width: 100%; height: auto; display: block; }
   #chart .axis-label { font-size: 10px; fill: currentColor; opacity: 0.6; }
   #chart .line { fill: none; stroke: #4c8bf5; stroke-width: 1.5; }
+  #chart .hover-line { stroke: currentColor; opacity: 0.3; stroke-width: 1; }
+  #chart .hover-dot { fill: #4c8bf5; }
+  #chart .hover-target { fill: transparent; cursor: crosshair; }
+  #chart-tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: #222; color: #fff; font-size: 0.8rem; padding: 4px 8px;
+    border-radius: 4px; white-space: nowrap; transform: translate(-50%, -110%);
+  }
 </style>
 </head>
 <body>
@@ -145,8 +153,59 @@ function renderChart(rows) {
       <path class="line" d="${path}" />
       ${yLabels}
       ${xLabels}
+      <line class="hover-line" id="hoverLineY" x1="0" y1="0" x2="0" y2="${height - padding.bottom}" style="display:none" />
+      <circle class="hover-dot" id="hoverDot" r="3" style="display:none" />
+      <rect class="hover-target" x="${padding.left}" y="${padding.top}" width="${plotW}" height="${plotH}" />
     </svg>
+    <div id="chart-tooltip"></div>
   `;
+
+  // Nearest-point lookup on mousemove — the SVG uses viewBox units (0-640),
+  // so client pixel coords need scaling back to that space before comparing
+  // against x(i), otherwise the crosshair drifts as the page is resized.
+  const svg = $('chart').querySelector('svg');
+  const hoverLine = $('chart').querySelector('#hoverLineY');
+  const hoverDot = $('chart').querySelector('#hoverDot');
+  const tooltip = $('chart').querySelector('#chart-tooltip');
+  const target = $('chart').querySelector('.hover-target');
+
+  function pointAtClientX(clientX) {
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((clientX - rect.left) / rect.width) * width;
+    const i = Math.round(((svgX - padding.left) / plotW) * (points.length - 1));
+    return Math.max(0, Math.min(points.length - 1, i));
+  }
+
+  function showAt(i) {
+    const p = points[i];
+    const px = x(i), py = y(p.close);
+    hoverLine.setAttribute('x1', px);
+    hoverLine.setAttribute('x2', px);
+    hoverLine.style.display = '';
+    hoverDot.setAttribute('cx', px);
+    hoverDot.setAttribute('cy', py);
+    hoverDot.style.display = '';
+
+    const rect = svg.getBoundingClientRect();
+    const scale = rect.width / width;
+    tooltip.style.left = `${px * scale}px`;
+    tooltip.style.top = `${py * scale}px`;
+    tooltip.style.display = '';
+    tooltip.textContent = `${p.date}: ${p.close.toFixed(2)}`;
+  }
+
+  function hide() {
+    hoverLine.style.display = 'none';
+    hoverDot.style.display = 'none';
+    tooltip.style.display = 'none';
+  }
+
+  target.addEventListener('mousemove', (e) => showAt(pointAtClientX(e.clientX)));
+  target.addEventListener('mouseleave', hide);
+  target.addEventListener('touchmove', (e) => {
+    if (e.touches[0]) showAt(pointAtClientX(e.touches[0].clientX));
+  }, { passive: true });
+  target.addEventListener('touchend', hide);
 }
 
 $('run').addEventListener('click', async () => {
