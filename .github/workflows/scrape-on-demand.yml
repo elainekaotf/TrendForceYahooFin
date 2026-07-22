@@ -1,0 +1,65 @@
+name: Scrape on demand
+
+# Triggered from docs/index.html (the GitHub Pages dashboard) via the
+# workflow_dispatch REST API, using the caller's own PAT — see docs/index.html
+# for the client side. `run_id` is an opaque token the page generates so it
+# can find *this specific* run afterwards (the dispatch API call itself
+# doesn't return a run id).
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Ticker symbol, e.g. 006208.TW'
+        required: true
+      from:
+        description: 'History start date (YYYY-MM-DD)'
+        required: false
+        default: '2018-01-01'
+      to:
+        description: 'History end date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      run_id:
+        description: 'Opaque correlation id set by the caller'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
+      - name: Resolve date range and build history URL
+        id: vars
+        run: |
+          FROM="${{ github.event.inputs.from }}"
+          TO="${{ github.event.inputs.to }}"
+          if [ -z "$TO" ]; then TO=$(date -u +%Y-%m-%d); fi
+          PERIOD1=$(date -u -jf "%Y-%m-%d" "$FROM" +%s 2>/dev/null || date -u -d "$FROM" +%s)
+          PERIOD2=$(date -u -jf "%Y-%m-%d" "$TO" +%s 2>/dev/null || date -u -d "$TO" +%s)
+          SYMBOL="${{ github.event.inputs.symbol }}"
+          echo "url=https://finance.yahoo.com/quote/${SYMBOL}/history/?period1=${PERIOD1}&period2=${PERIOD2}" >> "$GITHUB_OUTPUT"
+
+      - name: Run scraper
+        run: node scrape_history_page.js "${{ steps.vars.outputs.url }}"
+
+      - name: Commit resulting CSVs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add csv/
+          git diff --cached --quiet && echo "No CSV changes to commit" || git commit -m "Scrape ${{ github.event.inputs.symbol }} (run ${{ github.event.inputs.run_id }})"
+          git push
