@@ -190,7 +190,7 @@ function renderChart(rows) {
     const scale = rect.width / width;
     tooltip.style.left = `${px * scale}px`;
     tooltip.style.top = `${py * scale}px`;
-    tooltip.style.display = '';
+    tooltip.style.display = 'block';
     tooltip.textContent = `${p.date}: ${p.close.toFixed(2)}`;
   }
 
